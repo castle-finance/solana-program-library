@@ -551,7 +551,7 @@ pub struct NewReserveCollateralParams {
 
 /// Collateral exchange rate
 #[derive(Clone, Copy, Debug)]
-pub struct CollateralExchangeRate(Rate);
+pub struct CollateralExchangeRate(pub Rate);
 
 impl CollateralExchangeRate {
     /// Convert reserve collateral to liquidity

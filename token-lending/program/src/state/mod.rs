@@ -16,7 +16,9 @@ use solana_program::{msg, program_error::ProgramError};
 /// Collateral tokens are initially valued at a ratio of 5:1 (collateral:liquidity)
 // @FIXME: restore to 5
 pub const INITIAL_COLLATERAL_RATIO: u64 = 1;
-const INITIAL_COLLATERAL_RATE: u64 = INITIAL_COLLATERAL_RATIO * WAD;
+
+/// Initial collateral ratio expressed as a Rate
+pub const INITIAL_COLLATERAL_RATE: u64 = INITIAL_COLLATERAL_RATIO * WAD;
 
 /// Current version of the program and all new accounts created
 pub const PROGRAM_VERSION: u8 = 1;
