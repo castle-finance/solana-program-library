@@ -153,7 +153,7 @@ async fn test_null_switchboard() {
     );
 
     // limit to track compute unit increase
-    test.set_bpf_compute_max_units(70_000);
+    test.set_bpf_compute_max_units(75_000);
 
     let user_accounts_owner = Keypair::new();
     let lending_market = add_lending_market(&mut test);
@@ -418,6 +418,7 @@ async fn test_update_reserve_config() {
         deposit_limit: 1_000_000,
         borrow_limit: 300_000,
         fee_receiver: Keypair::new().pubkey(),
+        protocol_liquidation_fee: 30,
     };
 
     let (mut banks_client, payer, recent_blockhash) = test.start().await;

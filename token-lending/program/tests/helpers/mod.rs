@@ -23,6 +23,7 @@ use spl_token_lending::{
         init_reserve, liquidate_obligation, refresh_reserve,
     },
     math::{Decimal, Rate, TryAdd, TryMul},
+    processor::switchboard_v2_mainnet,
     pyth,
     state::{
         InitLendingMarketParams, InitObligationParams, InitReserveParams, LendingMarket,
@@ -32,6 +33,7 @@ use spl_token_lending::{
     },
 };
 use std::{convert::TryInto, str::FromStr};
+use switchboard_v2::AggregatorAccountData;
 
 pub const QUOTE_CURRENCY: [u8; 32] =
     *b"USD\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
@@ -56,16 +58,21 @@ pub fn test_reserve_config() -> ReserveConfig {
         deposit_limit: 100_000_000_000,
         borrow_limit: u64::MAX,
         fee_receiver: Keypair::new().pubkey(),
+        protocol_liquidation_fee: 30,
     }
 }
+
+pub const NULL_PUBKEY: &str = "nu11111111111111111111111111111111111111111";
 
 pub const SOL_PYTH_PRODUCT: &str = "3Mnn2fX6rQyUsyELYms1sBJyChWofzSNRoqYzvgMVz5E";
 pub const SOL_PYTH_PRICE: &str = "J83w4HKfqxwcq3BEMMkPFSppX3gqekLyLJBexebFVkix";
 pub const SOL_SWITCHBOARD_FEED: &str = "AdtRGGhmqvom3Jemp5YNrxd9q9unX36BZk1pujkkXijL";
+pub const SOL_SWITCHBOARDV2_FEED: &str = "GvDMxPzN1sCj7L26YDK2HnMRXEQmQ2aemov8YBtPS7vR";
 
 pub const SRM_PYTH_PRODUCT: &str = "6MEwdxe4g1NeAF9u6KDG14anJpFsVEa2cvr5H6iriFZ8";
 pub const SRM_PYTH_PRICE: &str = "992moaMQKs32GKZ9dxi8keyM2bUmbrwBZpK4p2K6X5Vs";
 pub const SRM_SWITCHBOARD_FEED: &str = "BAoygKcKN7wk8yKzLD6sxzUQUqLvhBV1rjMA4UJqfZuH";
+pub const SRM_SWITCHBOARDV2_FEED: &str = "CUgoqwiQ4wCt6Tthkrgx5saAEpLBjPCdHshVa4Pbfcx2";
 
 pub const USDC_MINT: &str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
@@ -313,13 +320,20 @@ pub fn add_reserve(
         &spl_token::id(),
     );
 
+    let amount = if let COption::Some(rent_reserve) = is_native {
+        rent_reserve
+    } else {
+        u32::MAX as u64
+    };
+
     test.add_packable_account(
         config.fee_receiver,
-        u32::MAX as u64,
+        amount,
         &Token {
             mint: liquidity_mint_pubkey,
             owner: lending_market.owner.pubkey(),
             amount: 0,
+            is_native,
             state: AccountState::Initialized,
             ..Token::default()
         },
@@ -602,7 +616,6 @@ impl TestLendingMarket {
         payer: &Keypair,
         reserve: &TestReserve,
         obligation: &TestObligation,
-        obligation_keypair: &Keypair,
         liquidity_amount: u64,
     ) {
         let user_transfer_authority = Keypair::new();
@@ -617,6 +630,15 @@ impl TestLendingMarket {
                     liquidity_amount,
                 )
                 .unwrap(),
+                approve(
+                    &spl_token::id(),
+                    &reserve.user_collateral_pubkey,
+                    &user_transfer_authority.pubkey(),
+                    &user_accounts_owner.pubkey(),
+                    &[],
+                    liquidity_amount,
+                )
+                .unwrap(),
                 deposit_reserve_liquidity_and_obligation_collateral(
                     spl_token_lending::id(),
                     liquidity_amount,
@@ -625,7 +647,7 @@ impl TestLendingMarket {
                     reserve.pubkey,
                     reserve.liquidity_supply_pubkey,
                     reserve.collateral_mint_pubkey,
-                    reserve.pubkey,
+                    self.pubkey,
                     reserve.collateral_supply_pubkey,
                     obligation.pubkey,
                     obligation.owner,
@@ -639,12 +661,7 @@ impl TestLendingMarket {
 
         let recent_blockhash = banks_client.get_recent_blockhash().await.unwrap();
         transaction.sign(
-            &[
-                payer,
-                user_accounts_owner,
-                &user_transfer_authority,
-                &obligation_keypair,
-            ],
+            &[payer, user_accounts_owner, &user_transfer_authority],
             recent_blockhash,
         );
 
@@ -1151,6 +1168,17 @@ pub fn add_sol_oracle(test: &mut ProgramTest) -> TestOracle {
     )
 }
 
+pub fn add_sol_oracle_switchboardv2(test: &mut ProgramTest) -> TestOracle {
+    add_oracle(
+        test,
+        Pubkey::from_str(NULL_PUBKEY).unwrap(),
+        Pubkey::from_str(NULL_PUBKEY).unwrap(),
+        Pubkey::from_str(SOL_SWITCHBOARDV2_FEED).unwrap(),
+        // Set SOL price to $20
+        Decimal::from(20u64),
+    )
+}
+
 pub fn add_usdc_oracle(test: &mut ProgramTest) -> TestOracle {
     add_oracle(
         test,
@@ -1158,6 +1186,18 @@ pub fn add_usdc_oracle(test: &mut ProgramTest) -> TestOracle {
         Pubkey::from_str(SRM_PYTH_PRODUCT).unwrap(),
         Pubkey::from_str(SRM_PYTH_PRICE).unwrap(),
         Pubkey::from_str(SRM_SWITCHBOARD_FEED).unwrap(),
+        // Set USDC price to $1
+        Decimal::from(1u64),
+    )
+}
+
+pub fn add_usdc_oracle_switchboardv2(test: &mut ProgramTest) -> TestOracle {
+    add_oracle(
+        test,
+        // Mock with SRM since Pyth doesn't have USDC yet
+        Pubkey::from_str(NULL_PUBKEY).unwrap(),
+        Pubkey::from_str(NULL_PUBKEY).unwrap(),
+        Pubkey::from_str(SRM_SWITCHBOARDV2_FEED).unwrap(),
         // Set USDC price to $1
         Decimal::from(1u64),
     )
@@ -1172,63 +1212,85 @@ pub fn add_oracle(
 ) -> TestOracle {
     let oracle_program_id = read_keypair_file("tests/fixtures/oracle_program_id.json").unwrap();
 
-    // Add Pyth product account
-    test.add_account_with_file_data(
-        pyth_product_pubkey,
-        u32::MAX as u64,
-        oracle_program_id.pubkey(),
-        &format!("{}.bin", pyth_product_pubkey.to_string()),
-    );
+    if pyth_price_pubkey.to_string() != NULL_PUBKEY {
+        // Add Pyth product account
+        test.add_account_with_file_data(
+            pyth_product_pubkey,
+            u32::MAX as u64,
+            oracle_program_id.pubkey(),
+            &format!("{}.bin", pyth_product_pubkey.to_string()),
+        );
+    }
+    if pyth_price_pubkey.to_string() != NULL_PUBKEY {
+        // Add Pyth price account after setting the price
+        let filename = &format!("{}.bin", pyth_price_pubkey.to_string());
+        let mut pyth_price_data = read_file(find_file(filename).unwrap_or_else(|| {
+            panic!("Unable to locate {}", filename);
+        }));
 
-    // Add Pyth price account after setting the price
-    let filename = &format!("{}.bin", pyth_price_pubkey.to_string());
-    let mut pyth_price_data = read_file(find_file(filename).unwrap_or_else(|| {
-        panic!("Unable to locate {}", filename);
-    }));
+        let mut pyth_price = pyth::load_mut::<pyth::Price>(pyth_price_data.as_mut_slice()).unwrap();
 
-    let mut pyth_price = pyth::load_mut::<pyth::Price>(pyth_price_data.as_mut_slice()).unwrap();
+        let decimals = 10u64
+            .checked_pow(pyth_price.expo.checked_abs().unwrap().try_into().unwrap())
+            .unwrap();
 
-    let decimals = 10u64
-        .checked_pow(pyth_price.expo.checked_abs().unwrap().try_into().unwrap())
-        .unwrap();
+        pyth_price.valid_slot = 0;
+        pyth_price.agg.price = price
+            .try_round_u64()
+            .unwrap()
+            .checked_mul(decimals)
+            .unwrap()
+            .try_into()
+            .unwrap();
 
-    pyth_price.valid_slot = 0;
-    pyth_price.agg.price = price
-        .try_round_u64()
-        .unwrap()
-        .checked_mul(decimals)
-        .unwrap()
-        .try_into()
-        .unwrap();
-
-    test.add_account(
-        pyth_price_pubkey,
-        Account {
-            lamports: u32::MAX as u64,
-            data: pyth_price_data,
-            owner: oracle_program_id.pubkey(),
-            executable: false,
-            rent_epoch: 0,
-        },
-    );
+        test.add_account(
+            pyth_price_pubkey,
+            Account {
+                lamports: u32::MAX as u64,
+                data: pyth_price_data,
+                owner: oracle_program_id.pubkey(),
+                executable: false,
+                rent_epoch: 0,
+            },
+        );
+    }
 
     // Add Switchboard price feed account after setting the price
     let filename2 = &format!("{}.bin", switchboard_feed_pubkey.to_string());
     // mut and set data here later
-    let switchboard_feed_data = read_file(find_file(filename2).unwrap_or_else(|| {
-        panic!("Unable to locate {}", filename2);
+    let mut switchboard_feed_data = read_file(find_file(filename2).unwrap_or_else(|| {
+        panic!("Unable tod locate {}", filename2);
     }));
 
-    test.add_account(
-        switchboard_feed_pubkey,
-        Account {
-            lamports: u32::MAX as u64,
-            data: switchboard_feed_data,
-            owner: oracle_program_id.pubkey(),
-            executable: false,
-            rent_epoch: 0,
-        },
-    );
+    let is_v2 = switchboard_feed_pubkey.to_string() == SOL_SWITCHBOARDV2_FEED
+        || switchboard_feed_pubkey.to_string() == SRM_SWITCHBOARDV2_FEED;
+    if is_v2 {
+        // let mut_switchboard_feed_data = &mut switchboard_feed_data[8..];
+        let agg_state =
+            bytemuck::from_bytes_mut::<AggregatorAccountData>(&mut switchboard_feed_data[8..]);
+        agg_state.latest_confirmed_round.round_open_slot = 0;
+        test.add_account(
+            switchboard_feed_pubkey,
+            Account {
+                lamports: u32::MAX as u64,
+                data: switchboard_feed_data,
+                owner: switchboard_v2_mainnet::id(),
+                executable: false,
+                rent_epoch: 0,
+            },
+        );
+    } else {
+        test.add_account(
+            switchboard_feed_pubkey,
+            Account {
+                lamports: u32::MAX as u64,
+                data: switchboard_feed_data,
+                owner: oracle_program_id.pubkey(),
+                executable: false,
+                rent_epoch: 0,
+            },
+        );
+    }
 
     TestOracle {
         pyth_product_pubkey,

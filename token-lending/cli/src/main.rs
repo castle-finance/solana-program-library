@@ -66,6 +66,8 @@ struct PartialReserveConfig {
     pub borrow_limit: Option<u64>,
     /// Liquidity fee receiver
     pub fee_receiver: Option<Pubkey>,
+    /// Cut of the liquidation bonus that the protocol receives, as a percentage
+    pub protocol_liquidation_fee: Option<u8>,
 }
 
 /// Reserve Fees with optional fields
@@ -646,6 +648,8 @@ fn main() {
             let flash_loan_fee_wad = (flash_loan_fee * WAD as f64) as u64;
 
             let liquidity_fee_receiver_keypair = Keypair::new();
+            let protocol_liquidation_fee =
+                value_of(arg_matches, "protocol_liquidation_fee").unwrap();
 
             let source_liquidity_account = config
                 .rpc_client
@@ -683,6 +687,7 @@ fn main() {
                     deposit_limit,
                     borrow_limit,
                     fee_receiver: liquidity_fee_receiver_keypair.pubkey(),
+                    protocol_liquidation_fee,
                 },
                 source_liquidity_pubkey,
                 source_liquidity_owner_keypair,
@@ -713,6 +718,7 @@ fn main() {
             let deposit_limit = value_of(arg_matches, "deposit_limit");
             let borrow_limit = value_of(arg_matches, "borrow_limit");
             let fee_receiver = pubkey_of(arg_matches, "fee_receiver");
+            let protocol_liquidation_fee = value_of(arg_matches, "protocol_liquidation_fee");
             let pyth_product_pubkey = pubkey_of(arg_matches, "pyth_product");
             let pyth_price_pubkey = pubkey_of(arg_matches, "pyth_price");
             let switchboard_feed_pubkey = pubkey_of(arg_matches, "switchboard_feed");
@@ -738,6 +744,7 @@ fn main() {
                     deposit_limit,
                     borrow_limit,
                     fee_receiver,
+                    protocol_liquidation_fee,
                 },
                 pyth_product_pubkey,
                 pyth_price_pubkey,
@@ -1164,12 +1171,21 @@ fn command_update_reserve(
         reserve.config.fee_receiver = reserve_config.fee_receiver.unwrap();
     }
 
+    if reserve_config.protocol_liquidation_fee.is_some() {
+        println!(
+            "Updating protocol_liquidation_fee from {} to {}",
+            reserve.config.protocol_liquidation_fee,
+            reserve_config.protocol_liquidation_fee.unwrap(),
+        );
+        reserve.config.protocol_liquidation_fee = reserve_config.protocol_liquidation_fee.unwrap();
+    }
+
     let mut new_pyth_product_pubkey = spl_token_lending::NULL_PUBKEY;
     if pyth_price_pubkey.is_some() {
         println!(
             "Updating pyth oracle pubkey from {} to {}",
-            reserve.liquidity.pyth_oracle_pubkey.to_string(),
-            pyth_price_pubkey.unwrap().to_string(),
+            reserve.liquidity.pyth_oracle_pubkey,
+            pyth_price_pubkey.unwrap(),
         );
         reserve.liquidity.pyth_oracle_pubkey = pyth_price_pubkey.unwrap();
         new_pyth_product_pubkey = pyth_product_pubkey.unwrap();
@@ -1178,8 +1194,8 @@ fn command_update_reserve(
     if switchboard_feed_pubkey.is_some() {
         println!(
             "Updating switchboard_oracle_pubkey {} to {}",
-            reserve.liquidity.switchboard_oracle_pubkey.to_string(),
-            switchboard_feed_pubkey.unwrap().to_string(),
+            reserve.liquidity.switchboard_oracle_pubkey,
+            switchboard_feed_pubkey.unwrap(),
         );
         reserve.liquidity.switchboard_oracle_pubkey = switchboard_feed_pubkey.unwrap();
     }
