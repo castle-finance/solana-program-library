@@ -10,6 +10,7 @@ edition = "2018"
 [features]
 no-entrypoint = []
 test-bpf = []
+devnet = []
 
 [dependencies]
 arrayref = "0.3.6"
